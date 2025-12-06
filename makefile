@@ -5,11 +5,15 @@ SRC_DIR = src
 TEST_DIR = tests
 
 SOURCES = $(wildcard $(SRC_DIR)/*.c)
+HEADERS = $(wildcard $(SRC_DIR)/*.h)
 
 all: $(TARGET)
 
 $(TARGET): $(SOURCES)
 	$(CC) $(CFLAGS) -o $(TARGET) $(SOURCES)
+
+%.0: %.c $(HEADER)
+	$(CC) $(CFLAGS) -g -c $< -o $@
 
 clean:
 	rm -f $(TARGET)
