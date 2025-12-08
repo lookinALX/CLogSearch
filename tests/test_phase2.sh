@@ -119,8 +119,7 @@ check_output "POST requests with 200 status" \
 # Test IP filter (if implemented)
 if $LOGSEARCH --help 2>&1 | grep -q "\-\-ip"; then
     check_output "IP filter: 192.168.1.1" \
-        "$LOGSEARCH -f small.log --ip 192.168.1.1" \
-        4
+        "$LOGSEARCH -f small.log --ip 192.168.1.1" \7        4
 fi
 
 echo ""
