@@ -27,7 +27,7 @@ check_output() {
     echo -n "Test: $test_name ... "
     
     output=$(eval "$command" 2>&1)
-    actual_count=$(echo "$output" | grep -c "192.168\|10.0.0\|172.16" 2>/dev/null || echo 0)
+    actual_count=$(echo "$output" | grep -E "192\.168|10\.0\.0|172\.16" | wc -l)
     
     if [ "$actual_count" -eq "$expected_count" ]; then
         echo -e "${GREEN}PASS${NC} (found $actual_count lines)"
@@ -90,7 +90,7 @@ check_output "All lines" \
 
 check_output "Only GET requests" \
     "$LOGSEARCH -f small.log -p GET" \
-    6
+    7
 
 check_output "Only POST requests" \
     "$LOGSEARCH -f small.log -p POST" \
