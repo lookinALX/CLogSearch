@@ -9,8 +9,19 @@
 #include <fcntl.h>
 #include <semaphore.h>
 #include <sys/stat.h>
+#include <string.h>
 #include "common.h"
 #include "parser.h"
+
+
+volatile sig_atomic_t should_terminate = 0;
+
+
+void signal_handler(int sig)
+{
+  (void)sig;
+  should_terminate = 1;
+}
 
 
 static void print_result(log_parse_struct_t log)
@@ -33,6 +44,41 @@ static off_t get_file_size(char* filename)
     fprintf(stderr, "ERROR: cannot get file stats\n");
   }
   return st.st_size;
+}
+
+
+static void combine_results(log_parse_struct_t* result, log_parse_struct_t* tmp_result)
+{
+  if (result->lines == NULL)
+  {
+    result->lines = malloc(tmp_result->lines_num * sizeof(char *));
+    result->lines_num = 0; 
+  }
+  else 
+  {
+    result->lines = realloc(result->lines, (result->lines_num + tmp_result->lines_num) * sizeof(char *));
+  }
+  
+  if (result->lines == NULL)
+  {
+    fprintf(stderr, "ERROR: mamory allocation is not possible\n");
+    exit(EXIT_FAILURE);
+  }
+  
+  for (int j = 0; j < tmp_result->lines_num; j++)
+  {
+    int i = result->lines_num + j;
+
+    result->lines[i] = malloc(strlen(tmp_result->lines[j]) + 1);  
+    if (result->lines[i] == NULL)
+    {
+      fprintf(stderr, "ERROR: cannot allocate for string\n");
+      exit(EXIT_FAILURE);
+    }
+    strcpy(result->lines[i], tmp_result->lines[j]);
+  }
+
+  result->lines_num += tmp_result->lines_num;
 }
 
 
@@ -119,6 +165,9 @@ int main(int argc, char **argv)
   off_t file_size = get_file_size(inputs.log_filepath);
   off_t chunk_size = file_size/inputs.num_workers;
 
+  signal(SIGINT, signal_handler);
+  signal(SIGTERM, signal_handler);
+
   for(int i = 0; i < inputs.num_workers; i++)
   {  
     start = i * chunk_size;
@@ -133,18 +182,100 @@ int main(int argc, char **argv)
     printf("Child PID=%d, parent=%d\n", getpid(), getppid());
     printf("My range: start=%ld, end=%ld\n", start, end);
     log_parse_struct_t result = parse_log_file(inputs, start, end);
+    
+    if (shared_data->terminate) exit(EXIT_SUCCESS);
+    
+    if(sem_wait(free_space) < 0)
+    {
+      fprintf(stderr, "ERROR: sem_trywait\n");
+    }
+    
+    if (shared_data->terminate) exit(EXIT_SUCCESS);
+    
+    if(sem_wait(write_mutex) < 0)
+    {
+      fprintf(stderr, "ERROR: sem_trywait\n");
+    }
+
+    if (shared_data->terminate) exit(EXIT_SUCCESS);
+    
+    int wp = shared_data->write_pos;
+    
+    shared_data->lines[wp].lines_num = result.lines_num;
+    shared_data->lines[wp].lines = malloc(result.lines_num * sizeof(char*));
+    
+    if (!shared_data->lines[wp].lines) 
+    {
+      fprintf(stderr, "ERROR: malloc in shm deep copy\n");
+      exit(EXIT_FAILURE);
+    }
+
+    for (int i = 0; i < result.lines_num; i++) 
+    {
+      size_t len = strlen(result.lines[i]) + 1;
+      shared_data->lines[wp].lines[i] = malloc(len);
+      if (!shared_data->lines[wp].lines[i]) 
+      {
+        fprintf(stderr, "ERROR: malloc in shm deep copy\n");
+        exit(EXIT_FAILURE);
+      }
+      memcpy(shared_data->lines[wp].lines[i], result.lines[i], len);
+    }
+
+    shared_data->write_pos = (shared_data->write_pos + 1) % SHARED_DATA_BUFFER_SIZE;
+
+    sem_post(write_mutex);
+    sem_post(used_space);
+
     exit(EXIT_SUCCESS);
   }
   else
   {
     printf("Parent PID=%d\n", getppid());
+    int results_read = 0;
+    
+    log_parse_struct_t result = {
+    .lines = NULL,
+    .lines_num = 0
+    };
+
+    while(!should_terminate && (results_read < inputs.num_workers))
+    {
+
+      if (sem_wait(used_space) < 0)
+      {
+        fprintf(stderr, "ERROR: sem_trywait\n");
+      }
+      
+      if (should_terminate) break;
+
+      log_parse_struct_t tmp_result = shared_data->lines[shared_data->read_pos];
+      shared_data->read_pos = (shared_data->read_pos+1) % SHARED_DATA_BUFFER_SIZE;
+      
+      combine_results(&result, &tmp_result);
+
+      sem_post(free_space);
+      results_read++;
+    }
+
+    sem_wait(write_mutex);
+    shared_data->terminate = 1;
+    sem_post(write_mutex);
+    
+    sem_close(free_space);
+    sem_close(used_space);
+    sem_close(write_mutex);
+
+    sem_unlink(SEM_FREE);
+    sem_unlink(SEM_USED);
+    sem_unlink(SEM_MUTEX);
+
+    munmap(shared_data, SHM_SIZE);
+    shm_unlink(SHM_NAME);
+    
+    print_result(result);
   }
-
-  log_parse_struct_t result = parse_log_file(inputs, start, end);
-  print_result(result);
-
-  munmap(shared_data, SHM_SIZE);
-  shm_unlink(SHM_NAME);
 
   return EXIT_SUCCESS;
 }
+
