@@ -2,11 +2,18 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
+#include <ctype.h>
+#include <signal.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <semaphore.h>
+#include <sys/stat.h>
 #include "common.h"
 #include "parser.h"
 
 
-void print_result(log_parse_struct_t log)
+static void print_result(log_parse_struct_t log)
 {
   printf("Parsing is finisched\nLines found: %d\n", log.lines_num);
   printf("#####################################################\n");
@@ -18,10 +25,23 @@ void print_result(log_parse_struct_t log)
 }
 
 
+static off_t get_file_size(char* filename)
+{
+  struct stat st;
+  if(stat(filename, &st) == -1)
+  {
+    fprintf(stderr, "ERROR: cannot get file stats\n");
+  }
+  return st.st_size;
+}
+
+
 int main(int argc, char **argv)
 {  
   inputs_t inputs = parse_inputs(argc, argv);
   print_inputs(inputs);
+
+  pid_t pid; 
   
   int shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
   if (shm_fd < 0)
@@ -64,7 +84,7 @@ int main(int argc, char **argv)
   }
 
   sem_t* used_space = sem_open(SEM_USED,  O_CREAT | O_EXCL, 0666, 0);
-  if (used_space == SEM_USED)
+  if (used_space == SEM_FAILED)
   {
     if (errno == EEXIST)
     {
@@ -84,7 +104,7 @@ int main(int argc, char **argv)
     if (errno == EEXIST) 
     {
       sem_unlink(SEM_MUTEX);
-      write_mutex = sem_open(SEM_MUTEX, O_CREAT | O_EXCL, 0666, 1;
+      write_mutex = sem_open(SEM_MUTEX, O_CREAT | O_EXCL, 0666, 1);
     }
     if (write_mutex == SEM_FAILED) 
     {
@@ -92,9 +112,35 @@ int main(int argc, char **argv)
       return EXIT_FAILURE;
     }
   }
+  
+  
+  off_t start;
+  off_t end;
+  off_t file_size = get_file_size(inputs.log_filepath);
+  off_t chunk_size = file_size/inputs.num_workers;
 
+  for(int i = 0; i < inputs.num_workers; i++)
+  {  
+    start = i * chunk_size;
+    if (i == inputs.num_workers - 1 ) {end = file_size;}
+    else {end = (i + 1) * chunk_size;}
+    pid = fork();
+    if (pid == 0) break;
+  }
+  
+  if (pid == 0) 
+  {
+    printf("Child PID=%d, parent=%d\n", getpid(), getppid());
+    printf("My range: start=%ld, end=%ld\n", start, end);
+    log_parse_struct_t result = parse_log_file(inputs, start, end);
+    exit(EXIT_SUCCESS);
+  }
+  else
+  {
+    printf("Parent PID=%d\n", getppid());
+  }
 
-  log_parse_struct_t result = parse_log_file(inputs);
+  log_parse_struct_t result = parse_log_file(inputs, start, end);
   print_result(result);
 
   munmap(shared_data, SHM_SIZE);

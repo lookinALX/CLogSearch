@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <string.h>
 #include <ctype.h>
+#include <signal.h>
 #include "common.h"
 #include "parser.h"
 
@@ -159,7 +160,7 @@ void print_inputs(inputs_t inputs)
 }
 
 
-log_parse_struct_t parse_log_file(inputs_t inputs)
+log_parse_struct_t parse_log_file(inputs_t inputs, off_t start, off_t end)
 {
   char* method = inputs.method_filter;
   char* status = inputs.status_filter;
@@ -168,6 +169,16 @@ log_parse_struct_t parse_log_file(inputs_t inputs)
 
   FILE* stream = inputs.log_file;
   
+  fseek(stream, start, SEEK_SET);
+
+  if(start != 0)
+  {
+    char* dummy = NULL;
+    size_t dummy_cap = 0;
+    getline(&dummy, &dummy_cap, stream);
+    free(dummy);
+  }
+
   int result_lines_cap = 20;
   log_parse_struct_t result = {
     .lines = malloc(result_lines_cap*sizeof(char *)),
@@ -186,7 +197,7 @@ log_parse_struct_t parse_log_file(inputs_t inputs)
    
   int i = 0;
 
-  while ((read_len_str = getline(&buffer, &buffer_cap, stream)) != -1 )
+  while ((read_len_str = getline(&buffer, &buffer_cap, stream)) != -1 && ftell(stream) <= end)
   {
     int passed = 0;
     
