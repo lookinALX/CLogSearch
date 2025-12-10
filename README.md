@@ -155,7 +155,6 @@ logsearch/
 │   └── test_phase5.sh        # Phase 5 tests
 ├── Makefile
 ├── README.md
-└── SPECIFICATION.md
 ```
 
 ### Building
