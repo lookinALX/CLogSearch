@@ -7,6 +7,7 @@
 #define SHM_NAME "clogsearch_shm"
 #define SHM_SIZE sizeof(shared_data_t)
 #define SHARED_DATA_BUFFER_SIZE 64
+#define SHM_DATA_SIZE 1024
 
 #define SEM_FREE "clogsearch_sem_free"
 #define SEM_USED "clogsearch_sem_used"
@@ -33,6 +34,8 @@ typedef struct shared_data
   int write_pos;
   int read_pos;
   volatile sig_atomic_t terminate;
+  size_t shm_offset;
+  char shm_buffer[SHM_DATA_SIZE];
 } shared_data_t;
 
 #endif

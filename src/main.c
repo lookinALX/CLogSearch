@@ -17,6 +17,20 @@
 volatile sig_atomic_t should_terminate = 0;
 
 
+void* shm_alloc(shared_data_t* shm, size_t size) 
+{
+  if (shm->shm_offset + size > SHM_DATA_SIZE) 
+  {
+    fprintf(stderr, "ERROR: shm overflow\n");
+    exit(1);
+  }
+
+  void* ptr = &shm->shm_buffer[shm->shm_offset];
+  shm->shm_offset += size;
+  return ptr;
+}
+
+
 void signal_handler(int sig)
 {
   (void)sig;
@@ -113,6 +127,7 @@ int main(int argc, char **argv)
   shared_data->write_pos = 0;
   shared_data->read_pos = 0;
   shared_data->terminate = 0;
+  shared_data->shm_offset = 0;
 
   sem_t* free_space = sem_open(SEM_FREE, O_CREAT | O_EXCL, 0666, SHARED_DATA_BUFFER_SIZE);
   if (free_space == SEM_FAILED)
@@ -200,28 +215,22 @@ int main(int argc, char **argv)
     if (shared_data->terminate) exit(EXIT_SUCCESS);
     
     int wp = shared_data->write_pos;
-    
+
     shared_data->lines[wp].lines_num = result.lines_num;
-    shared_data->lines[wp].lines = malloc(result.lines_num * sizeof(char*));
-    
-    if (!shared_data->lines[wp].lines) 
-    {
-      fprintf(stderr, "ERROR: malloc in shm deep copy\n");
-      exit(EXIT_FAILURE);
-    }
+
+    shared_data->lines[wp].lines = shm_alloc(shared_data, result.lines_num * sizeof(char*));
 
     for (int i = 0; i < result.lines_num; i++) 
     {
       size_t len = strlen(result.lines[i]) + 1;
-      shared_data->lines[wp].lines[i] = malloc(len);
-      if (!shared_data->lines[wp].lines[i]) 
-      {
-        fprintf(stderr, "ERROR: malloc in shm deep copy\n");
-        exit(EXIT_FAILURE);
-      }
-      memcpy(shared_data->lines[wp].lines[i], result.lines[i], len);
-    }
 
+      char* dst = shm_alloc(shared_data, len);
+
+      memcpy(dst, result.lines[i], len);
+
+      shared_data->lines[wp].lines[i] = dst; 
+    }
+    
     shared_data->write_pos = (shared_data->write_pos + 1) % SHARED_DATA_BUFFER_SIZE;
 
     sem_post(write_mutex);
